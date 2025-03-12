@@ -1,16 +1,15 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { SchedulerRegistry } from '@nestjs/schedule';
+import { Injectable } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import * as contractABI from '../abi/SimpleToken.json';
 import { AbstractWeb3Service } from 'src/common/abstract-web3.service';
 import { KafkaProducerService } from 'src/kafka/kafka.producer';
 
 @Injectable()
-export class Web3Service extends AbstractWeb3Service implements OnModuleInit {
+export class Web3Service extends AbstractWeb3Service {
     private readonly ABI = contractABI.abi;
 
     constructor(
         protected readonly kafkaService: KafkaProducerService,
-        private readonly schedulerRegistry: SchedulerRegistry,
     ) {
         super(kafkaService);
         this.contract = new this.web3.eth.Contract(
@@ -19,20 +18,9 @@ export class Web3Service extends AbstractWeb3Service implements OnModuleInit {
         );
     }
 
-    async onModuleInit() {
+    @Cron(CronExpression.EVERY_10_SECONDS)
+    handleCron() {
         this.fetchEvents();
-        this.addCronJob();
-    }
-
-    private addCronJob() {
-        const interval = 10000;
-        const callback = async () => {
-            this.logger.log('Fetching events every 10 seconds...');
-            await this.fetchEvents();
-        };
-
-        const intervalRef = setInterval(callback, interval);
-        this.schedulerRegistry.addInterval('fetchEventsInterval', intervalRef);
     }
 
     private async fetchEvents() {
