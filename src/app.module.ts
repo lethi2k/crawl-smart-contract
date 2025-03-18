@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { Web3Service } from './web3/web3.service';
+import { TaskService } from './task/task.service';
 import { ScheduleModule } from '@nestjs/schedule';
 import { KafkaProducerService } from './kafka/kafka.producer';
-import { RedisModule } from '@nestjs-modules/ioredis';
+import { Web3Service } from './web3/web3.service';
 
 @Module({
   imports: [
@@ -11,6 +11,6 @@ import { RedisModule } from '@nestjs-modules/ioredis';
     ScheduleModule.forRoot()
   ],
   controllers: [],
-  providers: [Web3Service, KafkaProducerService],
+  providers: [TaskService, Web3Service, KafkaProducerService],
 })
 export class AppModule { }

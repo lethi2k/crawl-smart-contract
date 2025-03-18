@@ -1,38 +1,75 @@
-import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import * as contractABI from '../abi/SimpleToken.json';
-import { AbstractWeb3Service } from 'src/common/abstract-web3.service';
+import { Injectable, Logger } from '@nestjs/common';
+import Web3 from 'web3';
 import { KafkaProducerService } from 'src/kafka/kafka.producer';
 
 @Injectable()
-export class Web3Service extends AbstractWeb3Service {
-    private readonly ABI = contractABI.abi;
+export class Web3Service {
+    protected readonly logger = new Logger(this.constructor.name);
+    protected web3: Web3;
+    protected contract: any;
+    private processedTransactions = new Set<string>();
 
-    constructor(
-        protected readonly kafkaService: KafkaProducerService,
-    ) {
-        super(kafkaService);
-        this.contract = new this.web3.eth.Contract(
-            this.ABI,
-            process.env.CONTRACT_ADDRESS
-        );
+    constructor(protected readonly kafkaService: KafkaProducerService) {
+        this.web3 = new Web3(process.env.WEB3_PROVIDER_URL || '');
     }
 
-    @Cron(CronExpression.EVERY_10_SECONDS)
-    handleCron() {
-        this.fetchEvents();
-    }
-
-    private async fetchEvents() {
+    async getEvents(contractABI: any, contractAddress: string, eventName: string) {
         try {
-            const events = await this.getEvents(this.ABI, process.env.CONTRACT_ADDRESS, 'NewWallet');
-            if (events.length > 0) {
-                await this.processCreateWalletDetails(events, process.env.CREATE_WALLET_TOPIC);
-            } else {
-                this.logger.log('No new events found.');
-            }
+            const latestBlock = await this.web3.eth.getBlockNumber();
+            const historicalBlock = latestBlock - BigInt(10000);
+            this.logger.log(`Fetching events from block ${historicalBlock} to ${latestBlock}`);
+
+            const contract = new this.web3.eth.Contract(contractABI, contractAddress);
+            const events = await contract.getPastEvents(eventName, {
+                fromBlock: historicalBlock,
+                toBlock: 'latest',
+            });
+
+            return events.filter((event: any) => !this.processedTransactions.has(event.transactionHash));
         } catch (error) {
-            this.logger.error(`Error in fetchEvents: ${error.message}`);
+            this.logger.error(`Error fetching events: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async processCreateWalletDetails(events: any[], topic: string) {
+        for (const event of events) {
+            const { metaWallet, meleeWallet } = event.returnValues;
+
+            this.logger.debug('event.returnValues', event);
+
+            if (this.processedTransactions.has(event.transactionHash)) {
+                this.logger.warn(`Skipping duplicate event: ${event.transactionHash}`);
+                continue;
+            }
+
+            await this.kafkaService.sendMessage(topic, {
+                metaWallet,
+                meleeWallet,
+                event: event.event,
+                transactionHash: event.transactionHash,
+            });
+
+            this.processedTransactions.add(event.transactionHash);
+        }
+    }
+
+    async processEventTopic(events: any[], topic: string) {
+        for (const event of events) {
+            const { creator, eventId, eventAddress } = event.returnValues;
+
+            if (this.processedTransactions.has(event.transactionHash)) {
+                this.logger.warn(`Skipping duplicate event: ${event.transactionHash}`);
+                continue;
+            }
+
+            await this.kafkaService.sendMessage(topic, {
+                creator,
+                eventId,
+                eventAddress,
+            });
+
+            this.processedTransactions.add(event.transactionHash);
         }
     }
 }
